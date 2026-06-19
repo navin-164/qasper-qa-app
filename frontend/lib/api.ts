@@ -1,24 +1,19 @@
-import axios from "axios";
-
-// Points to our running FastAPI development server
-const API_BASE_URL = "http://localhost:8000/api";
+// Force IPv4 loopback to match Uvicorn's default binding safely
+const API_BASE_URL = "http://127.0.0.1:8000/api";
 
 export interface QuestionRequest {
   question: string;
-  paper_id?: string | null;
+  paper_id?: string;
   top_k?: number;
   detailed?: boolean;
 }
 
 export interface EvidenceParagraph {
-  paper_id: string;
-  paper_title?: string;
-  section_idx: number;
-  section_name?: string;
-  paragraph_idx: number;
   paragraph_id: string;
+  paper_id: string;
+  section_name: string;
   text: string;
-  source: "vector" | "graph";
+  source: string;
   rerank_score?: number;
 }
 
@@ -27,7 +22,20 @@ export interface GraphFact {
   relation: string;
   object: string;
   confidence: number;
+}
+
+// --- TOKEN TRACKING TYPE ---
+export interface TokenStats {
+  prompt_tokens: number;
+  context_tokens: number;
+  answer_tokens: number;
+  total_tokens: number;
+}
+
+// --- NEW HALLUCINATION GUARDRAIL TYPE ---
+export interface SentenceValidation {
   sentence: string;
+  status: string; // "Supported", "Partially Supported", or "Unsupported"
 }
 
 export interface AnswerResponse {
@@ -36,34 +44,127 @@ export interface AnswerResponse {
   evidence_paragraphs: EvidenceParagraph[];
   graph_facts: GraphFact[];
   context: string;
+  token_stats: TokenStats;
+  validations: SentenceValidation[];
 }
 
-/**
- * Sends a hybrid RAG QA query to the FastAPI backend server.
- */
-export async function askQuestion(payload: QuestionRequest): Promise<AnswerResponse> {
-  try {
-    const response = await axios.post<AnswerResponse>(`${API_BASE_URL}/ask`, {
-      question: payload.question,
-      paper_id: payload.paper_id || null,
-      top_k: payload.top_k ?? 30,
-      detailed: payload.detailed ?? true,
-    });
-    return response.data;
-  } catch (error) {
-    console.error("API Communication Error:", error);
-    throw error;
-  }
+// --- TYPES FOR GRAPH EXPLORER ---
+
+export interface GraphNode {
+  id: string;
+  name: string;
+  type: string;
+  properties: string;
 }
 
-/**
- * Checks the running health status of the backend API.
- */
-export async function checkBackendHealth(): Promise<{ status: string; engine_loaded: boolean }> {
-  try {
-    const response = await axios.get(`${API_BASE_URL}/health`);
-    return response.data;
-  } catch (error) {
-    return { status: "disconnected", engine_loaded: false };
+export interface GraphEdge {
+  source: string;
+  target: string;
+  relation: string;
+  confidence: number;
+}
+
+export interface GraphSchemaResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+// --- TYPES FOR EVALUATION DASHBOARD ---
+
+export interface EvalRun {
+  id: string;
+  query: string;
+  faithfulness: number;
+  relevance: number;
+  contextPrecision: number;
+  status: string;
+}
+
+export interface EvalRequest {
+  queries?: string[];
+}
+
+export interface EvalDashboardResponse {
+  avg_faithfulness: number;
+  avg_relevance: number;
+  avg_precision: number;
+  runs: EvalRun[];
+}
+
+// --- NEW TYPES FOR PAPER BROWSER ---
+
+export interface PaperMetadata {
+  paper_id: string;
+  title: string;
+  abstract: string;
+  paragraph_count: number;
+}
+
+export interface PaperListResponse {
+  papers: PaperMetadata[];
+}
+
+// --- API METHODS ---
+
+export async function askQuestion(req: QuestionRequest): Promise<AnswerResponse> {
+  const response = await fetch(`${API_BASE_URL}/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(req),
+  });
+
+  if (!response.ok) {
+    throw new Error(`QA API Error: ${response.statusText}`);
   }
+
+  return response.json();
+}
+
+export async function fetchGraphSchema(limit: number = 80): Promise<GraphSchemaResponse> {
+  const response = await fetch(`${API_BASE_URL}/graph/schema?limit=${limit}`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Graph Schema API Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function runEvaluation(req?: EvalRequest): Promise<EvalDashboardResponse> {
+  const response = await fetch(`${API_BASE_URL}/evaluate`, {
+    method: "POST", // Changed from GET to POST
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+    body: JSON.stringify(req || {}), // Send the custom queries
+  });
+
+  if (!response.ok) {
+    throw new Error(`Evaluation API Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function fetchPapers(): Promise<PaperListResponse> {
+  const response = await fetch(`${API_BASE_URL}/papers`, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Papers API Error: ${response.statusText}`);
+  }
+
+  return response.json();
 }

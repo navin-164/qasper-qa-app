@@ -1,219 +1,324 @@
 "use client";
 
-import React, { useState } from "react";
-import { askQuestion, AnswerResponse, EvidenceParagraph, GraphFact } from "@/lib/api";
+import React, { useState, useRef, useEffect } from "react";
+import { askQuestion, AnswerResponse, TokenStats } from "@/lib/api";
 import { 
-  MessageSquare, 
   Send, 
-  Loader2, 
-  ShieldCheck, 
-  BookOpen, 
-  Share2, 
-  Sparkles 
+  Bot, 
+  User, 
+  Database, 
+  Network, 
+  Cpu,
+  Zap,
+  ShieldCheck,
+  AlertTriangle,
+  Loader2,
+  CheckCircle2,
+  XCircle
 } from "lucide-react";
 
-export default function ChatPage() {
-  const [question, setQuestion] = useState("");
+// Types for local UI state
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  responseMeta?: AnswerResponse;
+}
+
+export default function ChatbotPage() {
+  const [query, setQuery] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([{
+    id: "welcome",
+    role: "assistant",
+    content: "System initialized. Graph RAG Hybrid Engine online. Ask me a question about the QASPER dataset corpus."
+  }]);
   const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<AnswerResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"answer" | "vector" | "graph">("answer");
+  
+  // Track the most recent metadata to populate the right-hand panel
+  const [activeMeta, setActiveMeta] = useState<AnswerResponse | null>(null);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const handleSearch = async (e: React.FormEvent) => {
+  // Auto-scroll to bottom of chat
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!question.trim()) return;
+    if (!query.trim() || isLoading) return;
 
+    const userMsg: ChatMessage = { id: Date.now().toString(), role: "user", content: query };
+    setMessages(prev => [...prev, userMsg]);
+    setQuery("");
     setIsLoading(true);
+
     try {
-      const data = await askQuestion({
-        question: question,
-        detailed: true,
-        top_k: 30
-      });
-      setResult(data);
-      setActiveTab("answer");
-    } catch (err) {
-      console.error(err);
-      alert("Failed to communicate with the hybrid RAG backend. Make sure uvicorn is running on port 8000.");
+      // Hit our FastAPI backend (now with Hallucination Checking!)
+      const data = await askQuestion({ question: userMsg.content, detailed: true });
+      
+      const botMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: data.answer,
+        responseMeta: data
+      };
+      
+      setMessages(prev => [...prev, botMsg]);
+      setActiveMeta(data); // Update the right panel with this message's data
+    } catch (err: any) {
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: `**Error:** ${err.message || "Failed to connect to AI Engine."}`
+      }]);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // UI Helper for the Token Progress Bar (Assuming 8192 context window for Llama 3)
+  const MAX_TOKENS = 8192;
+  const renderTokenBar = (stats?: TokenStats) => {
+    if (!stats) return null;
+    const pct = Math.min((stats.total_tokens / MAX_TOKENS) * 100, 100);
+    let colorClass = "bg-emerald-500";
+    if (pct > 60) colorClass = "bg-amber-500";
+    if (pct > 85) colorClass = "bg-red-500";
+
+    return (
+      <div className="mt-4 space-y-3">
+        <div className="flex justify-between text-xs text-slate-400">
+          <span>Context Window Usage</span>
+          <span className="font-mono">{stats.total_tokens} / {MAX_TOKENS}</span>
+        </div>
+        <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden flex">
+          <div className={`h-full ${colorClass} transition-all duration-1000`} style={{ width: `${pct}%` }} />
+        </div>
+        {pct > 85 && (
+          <div className="flex items-center space-x-2 text-[10px] text-amber-400 mt-2 bg-amber-950/30 p-2 rounded border border-amber-900/50">
+            <AlertTriangle className="w-3 h-3 shrink-0" />
+            <span>Approaching LLM context limit. Risk of truncation.</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-900 overflow-hidden">
-      {/* Module Title */}
-      <div className="p-6 border-b border-slate-800 bg-slate-950/40 shrink-0">
-        <h1 className="text-xl font-bold text-white flex items-center space-x-2">
-          <MessageSquare className="w-5 h-5 text-violet-400" />
-          <span>Research Chatbot Workspace</span>
-        </h1>
-        <p className="text-xs text-slate-400 mt-1">
-          Query your multi-document arXiv corpus using unified Vector similarity search and Neo4j Graph relations.
-        </p>
+    <div className="flex-1 flex overflow-hidden bg-slate-900 h-full">
+      
+      {/* LEFT PANEL: Chat Interface */}
+      <div className="flex-1 flex flex-col min-w-0 border-r border-slate-800">
+        <div className="p-4 border-b border-slate-800 bg-slate-950/40 shrink-0 flex items-center space-x-3">
+          <Bot className="w-5 h-5 text-emerald-400" />
+          <h1 className="text-sm font-semibold text-white">Graph RAG Assistant</h1>
+        </div>
+
+        {/* Message Thread */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {messages.map((msg) => (
+            <div key={msg.id} className={`flex space-x-4 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              {msg.role === "assistant" && (
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                  <Bot className="w-4 h-4 text-emerald-400" />
+                </div>
+              )}
+              
+              <div className={`max-w-[80%] rounded-xl p-4 text-sm leading-relaxed ${
+                msg.role === "user" 
+                  ? "bg-blue-600 text-white" 
+                  : "bg-slate-950/60 border border-slate-800 text-slate-200"
+              }`}>
+                {/* Text Content */}
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+                
+                {/* Meta Indicator Button */}
+                {msg.responseMeta && (
+                   <button 
+                     onClick={() => setActiveMeta(msg.responseMeta!)}
+                     className="mt-3 flex items-center space-x-2 text-[10px] uppercase tracking-wider font-bold text-slate-500 hover:text-emerald-400 transition-colors"
+                   >
+                     <ShieldCheck className="w-3 h-3" />
+                     <span>View Trace Data</span>
+                   </button>
+                )}
+              </div>
+
+              {msg.role === "user" && (
+                <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                  <User className="w-4 h-4 text-blue-400" />
+                </div>
+              )}
+            </div>
+          ))}
+          
+          {isLoading && (
+            <div className="flex justify-start space-x-4">
+               <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                  <Bot className="w-4 h-4 text-emerald-400" />
+                </div>
+                <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 flex items-center space-x-3 text-slate-400 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                  <span>Traversing Knowledge Graph & Verifying Facts...</span>
+                </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Area */}
+        <div className="p-4 bg-slate-950/40 border-t border-slate-800 shrink-0">
+          <form onSubmit={handleSubmit} className="relative flex items-center">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Ask about a methodology, variance tradeoff, dataset split..."
+              disabled={isLoading}
+              className="w-full bg-slate-900 border border-slate-800 text-slate-200 text-sm rounded-xl pl-4 pr-12 py-4 outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition-all disabled:opacity-50"
+            />
+            <button 
+              type="submit" 
+              disabled={isLoading || !query.trim()}
+              className="absolute right-2 p-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg disabled:opacity-50 disabled:hover:bg-emerald-600 transition-colors"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </div>
       </div>
 
-      {/* Main Workspace Layout */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        
-        {/* Left Side: Interaction & Generation Engine */}
-        <div className="flex-1 flex flex-col p-6 min-w-0 border-r border-slate-800/60 overflow-y-auto">
-          
-          {/* Form Entry */}
-          <form onSubmit={handleSearch} className="mb-6 shrink-0">
-            <div className="relative flex items-center">
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Ask an academic question (e.g., Explain the dataset split or Q-learning variance)..."
-                className="w-full bg-slate-950 border border-slate-800 focus:border-violet-500 focus:ring-1 focus:ring-violet-500 text-slate-100 placeholder-slate-500 pl-4 pr-12 py-3.5 rounded-xl text-sm transition-all shadow-inner outline-none"
-                disabled={isLoading}
-              />
-              <button
-                type="submit"
-                disabled={isLoading || !question.trim()}
-                className="absolute right-2 p-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition-all disabled:bg-slate-800 disabled:text-slate-600"
-              >
-                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              </button>
-            </div>
-          </form>
+      {/* RIGHT PANEL: Inspection & Telemetry */}
+      <div className="w-[450px] flex flex-col bg-slate-950/20 shrink-0">
+        <div className="p-4 border-b border-slate-800 bg-slate-950/40 shrink-0">
+          <h2 className="text-sm font-semibold text-white flex items-center space-x-2">
+            <Cpu className="w-4 h-4 text-violet-400" />
+            <span>Execution Telemetry</span>
+          </h2>
+        </div>
 
-          {/* Response Deck */}
-          <div className="flex-1 min-h-0 flex flex-col">
-            {result ? (
-              <div className="space-y-6">
-                
-                {/* Unified Tab Selector */}
-                <div className="flex border-b border-slate-800 space-x-6 text-sm">
-                  <button
-                    onClick={() => setActiveTab("answer")}
-                    className={`pb-3 font-medium transition-all relative ${
-                      activeTab === "answer" ? "text-violet-400" : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    Generated Answer
-                    {activeTab === "answer" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-500 rounded-full" />}
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("vector")}
-                    className={`pb-3 font-medium transition-all relative ${
-                      activeTab === "vector" ? "text-blue-400" : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    Dense Evidence Chunks ({result.evidence_paragraphs.length})
-                    {activeTab === "vector" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-full" />}
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("graph")}
-                    className={`pb-3 font-medium transition-all relative ${
-                      activeTab === "graph" ? "text-pink-400" : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    Knowledge Graph Facts ({result.graph_facts.length})
-                    {activeTab === "graph" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-pink-500 rounded-full" />}
-                  </button>
-                </div>
+        {!activeMeta ? (
+          <div className="flex-1 flex items-center justify-center p-6 text-center text-slate-500 text-xs">
+            Send a query to visualize the retrieval trace, hallucination checks, and token telemetry.
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+            
+            {/* NEW: Hallucination Guardrail Panel */}
+            {activeMeta.validations && activeMeta.validations.length > 0 && (
+              <div className="bg-slate-900/50 border border-slate-800 p-4 rounded-xl">
+                 <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4 flex items-center space-x-2">
+                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                    <span>Factuality Guardrail</span>
+                 </h3>
+                 <div className="space-y-2">
+                   {activeMeta.validations.map((v, i) => {
+                     let color = "text-emerald-400";
+                     let bg = "bg-emerald-500/10 border-emerald-500/20";
+                     let Icon = CheckCircle2;
+                     
+                     if (v.status === "Partially Supported") {
+                       color = "text-amber-400";
+                       bg = "bg-amber-500/10 border-amber-500/20";
+                       Icon = AlertTriangle;
+                     } else if (v.status === "Unsupported") {
+                       color = "text-red-400";
+                       bg = "bg-red-500/10 border-red-500/20";
+                       Icon = XCircle;
+                     }
 
-                {/* Tab Output Windows */}
-                <div className="py-2">
-                  {activeTab === "answer" && (
-                    <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-6 shadow-sm leading-relaxed text-slate-200 space-y-4">
-                      <div className="flex items-center space-x-2 text-violet-400 text-xs font-semibold tracking-wider uppercase">
-                        <Sparkles className="w-4 h-4" />
-                        <span>LLM Synthesis (Llama-3.1-8B)</span>
-                      </div>
-                      <p className="text-sm whitespace-pre-wrap">{result.answer}</p>
-                    </div>
-                  )}
-
-                  {activeTab === "vector" && (
-                    <div className="space-y-4">
-                      {result.evidence_paragraphs.map((para: EvidenceParagraph, idx: number) => (
-                        <div key={para.paragraph_id || idx} className="bg-slate-950/40 border border-slate-800 p-5 rounded-xl space-y-3">
-                          <div className="flex justify-between items-center text-xs">
-                            <span className="text-blue-400 font-medium flex items-center space-x-1">
-                              <BookOpen className="w-3.5 h-3.5" />
-                              <span>Chunk [{idx + 1}] — Section: {para.section_name || "Body"}</span>
-                            </span>
-                            <span className="text-slate-500 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                              Re-rank Score: {para.rerank_score?.toFixed(4) || "N/A"}
-                            </span>
-                          </div>
-                          <p className="text-sm text-slate-300 italic">"{para.text}"</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {activeTab === "graph" && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {result.graph_facts.map((fact: GraphFact, idx: number) => (
-                        <div key={idx} className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl flex flex-col justify-between">
-                          <div className="font-mono text-xs text-slate-300 space-y-1">
-                            <div className="flex items-center space-x-2"><span className="text-pink-400 font-bold">S:</span> <span>{fact.subject}</span></div>
-                            <div className="flex items-center space-x-2"><span className="text-violet-400 font-bold">P:</span> <span className="underline decoration-dotted">{fact.relation}</span></div>
-                            <div className="flex items-center space-x-2"><span className="text-cyan-400 font-bold">O:</span> <span>{fact.object}</span></div>
-                          </div>
-                          <div className="mt-3 pt-2 border-t border-slate-900 text-[11px] text-slate-500 flex justify-between items-center">
-                            <span>Confidence Score</span>
-                            <span className="text-emerald-500 font-bold">{(fact.confidence * 100).toFixed(0)}%</span>
-                          </div>
-                        </div>
-                      ))}
-                      {result.graph_facts.length === 0 && (
-                        <p className="text-sm text-slate-500 italic col-span-2 p-4 text-center">No explicit entity triples found in the knowledge graph for this path.</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-2xl p-8 text-center text-slate-500">
-                <MessageSquare className="w-10 h-10 text-slate-700 mb-3" />
-                <p className="text-sm">No queries initialized yet.</p>
-                <p className="text-xs text-slate-600 mt-1">Submit a question above to execute the pipeline routing checks.</p>
+                     return (
+                       <div key={i} className={`p-3 border rounded-lg transition-colors ${bg}`}>
+                         <div className={`flex items-center space-x-1.5 mb-1 ${color} font-bold text-[9px] uppercase tracking-wider`}>
+                           <Icon className="w-3 h-3" />
+                           <span>{v.status}</span>
+                         </div>
+                         <p className="text-[11px] text-slate-200 leading-relaxed">{v.sentence}</p>
+                       </div>
+                     )
+                   })}
+                 </div>
               </div>
             )}
-          </div>
 
-        </div>
-
-        {/* Right Side: Integrity Shield & Guardrails Panel */}
-        <div className="w-80 p-6 bg-slate-950/20 shrink-0 flex flex-col overflow-y-auto space-y-6">
-          <div className="border border-slate-800/80 bg-slate-950/40 rounded-xl p-4 space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center space-x-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Hallucination Guardrail</span>
-            </h3>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Our extraction system monitors the pipeline context matrices. Cross-encoder scores rule out irrelevant citations before generation.
-            </p>
-            <div className="space-y-2 pt-2 text-[11px]">
-              <div className="flex justify-between items-center bg-slate-900/60 p-2 rounded border border-slate-800">
-                <span className="text-slate-400">Context Source Match</span>
-                <span className={result ? "text-emerald-400 font-medium" : "text-slate-600"}>{result ? "Verified" : "Pending"}</span>
+            {/* Token Metrics Tracker */}
+            <div className="bg-slate-900/50 border border-slate-800 p-4 rounded-xl">
+              <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4 flex items-center space-x-2">
+                <Zap className="w-3 h-3 text-yellow-400" />
+                <span>Token Metrics</span>
+              </h3>
+              
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-slate-950 border border-slate-800 p-2 rounded-lg">
+                  <div className="text-lg font-mono font-semibold text-violet-400">{activeMeta.token_stats?.prompt_tokens || 0}</div>
+                  <div className="text-[9px] text-slate-500 uppercase mt-1">Prompt</div>
+                </div>
+                <div className="bg-slate-950 border border-slate-800 p-2 rounded-lg">
+                  <div className="text-lg font-mono font-semibold text-blue-400">{activeMeta.token_stats?.context_tokens || 0}</div>
+                  <div className="text-[9px] text-slate-500 uppercase mt-1">Context</div>
+                </div>
+                <div className="bg-slate-950 border border-slate-800 p-2 rounded-lg">
+                  <div className="text-lg font-mono font-semibold text-emerald-400">{activeMeta.token_stats?.answer_tokens || 0}</div>
+                  <div className="text-[9px] text-slate-500 uppercase mt-1">Answer</div>
+                </div>
               </div>
-              <div className="flex justify-between items-center bg-slate-900/60 p-2 rounded border border-slate-800">
-                <span className="text-slate-400">Strict Extraction Mode</span>
-                <span className="text-violet-400 font-medium">Active</span>
-              </div>
+              
+              {renderTokenBar(activeMeta.token_stats)}
             </div>
-          </div>
 
-          <div className="border border-slate-800/80 bg-slate-950/40 rounded-xl p-4 space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center space-x-2">
-              <Share2 className="w-4 h-4 text-blue-400" />
-              <span>Pipeline Trace</span>
-            </h3>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              When a question hits our API, the engine optimizes the query string before dividing execution branches to FAISS and Neo4j.
-            </p>
-          </div>
-        </div>
+            {/* Extracted Graph Facts */}
+            <div className="space-y-2">
+               <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-2">
+                <Network className="w-3 h-3 text-pink-400" />
+                <span>Graph Triplets ({activeMeta.graph_facts.length})</span>
+              </h3>
+              {activeMeta.graph_facts.length === 0 ? (
+                <div className="text-xs text-slate-600 italic px-2">No relevant triples found.</div>
+              ) : (
+                <div className="space-y-2">
+                  {activeMeta.graph_facts.map((fact, idx) => (
+                    <div key={idx} className="bg-slate-950 border border-slate-800/60 rounded p-2 text-[11px] flex items-center space-x-2 text-slate-300">
+                      <span className="font-semibold text-white max-w-[100px] truncate">{fact.subject}</span>
+                      <span className="text-pink-400 font-mono shrink-0">[{fact.relation}]</span>
+                      <span className="font-semibold text-white max-w-[100px] truncate">{fact.object}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
+            {/* Vector Evidence Chunks */}
+            <div className="space-y-2">
+               <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-2">
+                <Database className="w-3 h-3 text-blue-400" />
+                <span>Vector Evidence ({activeMeta.evidence_paragraphs.length})</span>
+              </h3>
+              {activeMeta.evidence_paragraphs.length === 0 ? (
+                <div className="text-xs text-slate-600 italic px-2">No vector chunks retrieved.</div>
+              ) : (
+                <div className="space-y-3">
+                  {activeMeta.evidence_paragraphs.map((para, idx) => (
+                    <div key={idx} className="bg-slate-950 border border-slate-800/60 rounded-lg p-3 text-xs text-slate-400 hover:border-slate-700 transition-colors">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-mono text-[10px] text-blue-400">{para.paragraph_id}</span>
+                        {para.rerank_score && (
+                          <span className="font-mono text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/20">
+                            Score: {para.rerank_score.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="line-clamp-4 leading-relaxed">{para.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
       </div>
+
     </div>
   );
 }
